@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Login | Gmail Monitor</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="pro-login">
+    <div class="pro-login-card">
+        <div class="sidebar-logo" style="justify-content: center; margin-bottom: 40px;">
+            <div class="logo-icon">📫</div>
+            <div class="logo-text">GMONITOR</div>
+        </div>
+        
+        <form action="/login" method="POST">
+            <div class="pro-input-group">
+                <label>Admin Access</label>
+                <input type="text" name="username" placeholder="Username" required autofocus>
+            </div>
+            <div class="pro-input-group">
+                <label>Secure Key</label>
+                <input type="password" name="password" placeholder="••••••••" required>
+            </div>
+            
+            {% if error %}
+            <div style="color: var(--accent-rose); font-size: 13px; text-align: center; margin-bottom: 20px;">
+                {{ error }}
+            </div>
+            {% endif %}
+            
+            <button type="submit" class="btn-pro" style="width: 100%; justify-content: center;">
+                Enter Dashboard
+            </button>
+        </form>
+        
+        <p style="color: var(--text-muted); font-size: 11px; text-align: center; margin-top: 30px;">
+            Secure Placement Monitoring System v2.0
+        </p>
+    </div>
+</body>
+</html>

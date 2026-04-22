@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard | Placement Monitor</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <div class="logo-icon">📫</div>
+            <div class="logo-text">GMONITOR</div>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="#" class="nav-item active">
+                <span>📊</span> Overview
+            </a>
+            <a href="#" class="nav-item">
+                <span>📫</span> Connected Boites
+            </a>
+            <a href="#" class="nav-item">
+                <span>📈</span> Analytics
+            </a>
+            <a href="#" class="nav-item">
+                <span>⚙️</span> Settings
+            </a>
+        </nav>
+        
+        <div class="sidebar-footer">
+            <a href="/logout" class="nav-item" style="color: var(--accent-rose);">
+                <span>🚪</span> Logout
+            </a>
+        </div>
+    </aside>
+
+    <main class="main-viewport">
+        <header class="header">
+            <div class="header-search">
+                <input type="text" placeholder="Search accounts or emails...">
+            </div>
+            
+            <div class="header-status">
+                <div class="live-indicator">
+                    <div class="pulse-dot"></div>
+                    Live Monitoring
+                </div>
+                <a href="/authorize" class="btn-pro">+ Connect Gmail</a>
+            </div>
+        </header>
+
+        <section class="content-container">
+            <div class="page-title-section">
+                <h1>Placement Dashboard</h1>
+                <p>Real-time inbox vs spam monitoring across all connected accounts.</p>
+            </div>
+
+            <div class="stats-overview">
+                <div class="stat-card">
+                    <div class="label">Total Accounts</div>
+                    <div id="total-accounts" class="value">0</div>
+                    <div class="trend up">Active Monitor</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Primary Placement</div>
+                    <div id="primary-rate" class="value">0%</div>
+                    <div class="trend up">↑ 2.4% vs last scan</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Spam Rate</div>
+                    <div id="spam-rate" class="value">0%</div>
+                    <div class="trend down">↓ 1.1% vs last scan</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Last Scan</div>
+                    <div id="last-sync-time" class="value">--:--</div>
+                    <div class="trend">Refreshing every 3s</div>
+                </div>
+            </div>
+
+            <div id="inbox-grid" class="inbox-grid">
+                <!-- Pro cards will be injected here -->
+                <div class="loading-state">
+                    <div class="spinner"></div>
+                    <p>Fetching placement data...</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Templates -->
+    <template id="pro-card-template">
+        <div class="modern-card">
+            <div class="card-top">
+                <div class="account-meta">
+                    <div class="avatar-ring">
+                        <img src="https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico" alt="Gmail">
+                    </div>
+                    <div class="account-details">
+                        <h3 class="acc-email">email@gmail.com</h3>
+                        <p>Google Workspace Monitor</p>
+                    </div>
+                </div>
+                <div class="delivery-gauge">
+                    <div class="gauge-circle">100%</div>
+                    <div class="gauge-label">Placement</div>
+                </div>
+            </div>
+            <div class="card-content">
+                <div class="feed-title">Real-time Feed</div>
+                <div class="item-list">
+                    <!-- Emails -->
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template id="pro-item-template">
+        <div class="pro-list-item">
+            <div class="item-top">
+                <div class="sender-block">
+                    <span class="p-name">Name</span>
+                    <span class="p-mail">email@example.com</span>
+                </div>
+                <span class="p-status-badge">Primary</span>
+            </div>
+            <div class="item-bottom">
+                <span class="p-subject">Subject line...</span>
+                <span class="p-time">0s ago</span>
+            </div>
+        </div>
+    </template>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard | Placement Monitor</title>
     <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <aside class="sidebar">
@@ -46,6 +47,9 @@
                     <div class="pulse-dot"></div>
                     Live Monitoring
                 </div>
+                <button id="refresh-btn" class="btn-pro" style="background: transparent; border: 1px solid var(--glass-border); box-shadow: none;">
+                    <span id="refresh-icon">🔄</span> Refresh
+                </button>
                 <a href="/authorize" class="btn-pro">+ Connect Gmail</a>
             </div>
         </header>
@@ -54,6 +58,18 @@
             <div class="page-title-section">
                 <h1>Placement Dashboard</h1>
                 <p>Real-time inbox vs spam monitoring across all connected accounts.</p>
+            </div>
+
+            <div class="analytics-grid">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h3>Placement Distribution</h3>
+                        <p>Inbox vs Spam vs Promotions</p>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="placementChart"></canvas>
+                    </div>
+                </div>
             </div>
 
             <div class="stats-overview">

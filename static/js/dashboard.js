@@ -1,128 +1,105 @@
 document.addEventListener('DOMContentLoaded', () => {
     const inboxGrid = document.getElementById('inbox-grid');
-    const cardTemplate = document.getElementById('pro-card-template');
-    const itemTemplate = document.getElementById('pro-item-template');
-    
-    // Global Stat Elements
-    const totalAccountsEl = document.getElementById('total-accounts');
-    const primaryRateEl = document.getElementById('primary-rate');
-    const spamRateEl = document.getElementById('spam-rate');
     const lastSyncTimeEl = document.getElementById('last-sync-time');
-
-    async function fetchUpdates() {
-        try {
-            const response = await fetch('/api/scan');
-            if (!response.ok) throw new Error('Unauthorized or Offline');
-            const data = await response.json();
-            
-            lastSyncTimeEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-            if (data.length === 0) {
-                inboxGrid.innerHTML = `
-                    <div class="loading-state">
-                        <p style="color: var(--text-muted)">No active boites. Add an account to begin monitoring.</p>
-                    </div>
-                `;
-                updateGlobalStats(0, 0, 0);
-                return;
+    const refreshBtn = document.getElementById('refresh-btn');
+    const totalAccountsEl = document.getElementById('total-accounts');
+    
+    // Safety check for the refresh button
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+            const icon = document.getElementById('refresh-icon');
+            if (icon) {
+                icon.style.transition = 'transform 0.5s ease';
+                icon.style.transform = 'rotate(360deg)';
+                setTimeout(() => { icon.style.transform = 'rotate(0deg)'; }, 500);
             }
-
-            // Remove loading spinner
-            const loading = inboxGrid.querySelector('.loading-state');
-            if (loading) loading.remove();
-
-            let totalInbox = 0;
-            let totalSpam = 0;
-            let totalProcessed = 0;
-
-            data.forEach(account => {
-                let card = document.querySelector(`[data-email="${account.email}"]`);
-                
-                if (!card) {
-                    const clone = cardTemplate.content.cloneNode(true);
-                    card = clone.querySelector('.modern-card');
-                    card.setAttribute('data-email', account.email);
-                    card.querySelector('.acc-email').textContent = account.email;
-                    inboxGrid.appendChild(clone);
-                    card = document.querySelector(`[data-email="${account.email}"]`);
-                }
-
-                // Calculate Placement Gauge
-                const inboxCount = account.emails.filter(e => e.folder === 'Inbox').length;
-                const spamCount = account.emails.filter(e => e.folder === 'Spam').length;
-                const total = account.emails.length;
-                const rate = total > 0 ? Math.round((inboxCount / total) * 100) : 0;
-                
-                card.querySelector('.gauge-circle').textContent = `${rate}%`;
-                card.querySelector('.gauge-circle').style.color = rate > 80 ? 'var(--accent-emerald)' : (rate > 50 ? 'var(--accent-amber)' : 'var(--accent-rose)');
-
-                totalInbox += inboxCount;
-                totalSpam += spamCount;
-                totalProcessed += total;
-
-                // Update Feed
-                const emailList = card.querySelector('.item-list');
-                const currentIds = new Set(Array.from(emailList.querySelectorAll('.pro-list-item')).map(e => e.getAttribute('data-id')));
-                
-                account.emails.reverse().forEach(email => {
-                    if (!currentIds.has(email.id)) {
-                        const itemClone = itemTemplate.content.cloneNode(true);
-                        const item = itemClone.querySelector('.pro-list-item');
-                        item.setAttribute('data-id', email.id);
-                        item.setAttribute('data-ts', email.timestamp);
-                        
-                        item.querySelector('.p-name').textContent = email.from.split('<')[0].trim() || 'Internal User';
-                        item.querySelector('.p-mail').textContent = email.from;
-                        item.querySelector('.p-subject').textContent = email.subject || '(No Subject)';
-                        
-                        const badge = item.querySelector('.p-status-badge');
-                        badge.textContent = email.folder;
-                        badge.className = `p-status-badge ${email.folder.toLowerCase()}`;
-                        
-                        emailList.prepend(itemClone);
-                    }
-                });
-
-                // Clean up list
-                const items = emailList.querySelectorAll('.pro-list-item');
-                if (items.length > 20) {
-                    for (let i = 20; i < items.length; i++) items[i].remove();
-                }
-            });
-
-            updateGlobalStats(data.length, totalInbox, totalProcessed);
-            updateTimers();
-
-        } catch (err) {
-            console.error('Scan error:', err);
-        }
-    }
-
-    function updateGlobalStats(count, inbox, total) {
-        totalAccountsEl.textContent = count;
-        const rate = total > 0 ? Math.round((inbox / total) * 100) : 0;
-        primaryRateEl.textContent = `${rate}%`;
-        spamRateEl.textContent = `${100 - rate}%`;
-    }
-
-    function updateTimers() {
-        const now = Date.now();
-        document.querySelectorAll('.pro-list-item').forEach(item => {
-            const ts = parseInt(item.getAttribute('data-ts'));
-            const diff = Math.floor((now - ts) / 1000);
-            
-            let str = 'Just now';
-            if (diff > 0) {
-                if (diff < 60) str = `${diff}s ago`;
-                else if (diff < 3600) str = `${Math.floor(diff/60)}m ago`;
-                else str = `${Math.floor(diff/3600)}h ago`;
-            }
-            item.querySelector('.p-time').textContent = str;
+            fetchUpdates();
         });
     }
 
-    // Init
+    async function fetchUpdates() {
+        try {
+            console.log("Fetching updates...");
+            const response = await fetch('/api/scan');
+            if (!response.ok) {
+                console.error('API Offline or Unauthorized');
+                return;
+            }
+            
+            const data = await response.json();
+            const results = data.results || [];
+            const db_status = data.db_status || 'unknown';
+            
+            console.log("DB Status:", db_status);
+            if (lastSyncTimeEl) {
+                lastSyncTimeEl.textContent = new Date().toLocaleTimeString();
+            }
+
+            if (results.length === 0) {
+                inboxGrid.innerHTML = `
+                    <div style="text-align: center; padding: 60px; color: #a1a1aa; background: rgba(255,255,255,0.05); border-radius: 20px; border: 1px dashed rgba(255,255,255,0.1);">
+                        <p style="font-size: 1.2rem; margin-bottom: 10px;">No accounts found.</p>
+                        <p style="font-size: 0.9rem; margin-bottom: 20px;">Database Status: <span style="color: ${db_status === 'connected' ? '#10b981' : '#f43f5e'}">${db_status}</span></p>
+                        <a href="/authorize" class="btn-pro" style="padding: 10px 20px; text-decoration: none;">+ Connect Gmail Now</a>
+                    </div>
+                `;
+                if (totalAccountsEl) totalAccountsEl.textContent = '0';
+                return;
+            }
+
+            if (totalAccountsEl) totalAccountsEl.textContent = results.length;
+
+            // Render cards
+            let html = '';
+            results.forEach(acc => {
+                const inboxCount = acc.emails.filter(e => e.folder === 'Inbox').length;
+                const spamCount = acc.emails.filter(e => e.folder === 'Spam').length;
+                const rate = acc.emails.length > 0 ? Math.round((inboxCount / acc.emails.length) * 100) : 0;
+                
+                html += `
+                    <div class="modern-card" style="margin-bottom: 20px; padding: 25px;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div>
+                                <h3 style="margin-bottom: 5px;">${acc.email}</h3>
+                                <span class="badge ${acc.status === 'online' ? 'online' : 'error'}">${acc.status}</span>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="font-size: 1.5rem; font-weight: bold; color: ${rate > 80 ? '#10b981' : '#f59e0b'}">${rate}%</div>
+                                <div style="font-size: 0.7rem; color: #71717a;">INBOX RATE</div>
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <div style="background: rgba(16, 185, 129, 0.1); padding: 10px; border-radius: 10px; text-align: center;">
+                                <div style="font-size: 0.7rem; color: #10b981;">INBOX</div>
+                                <div style="font-size: 1.1rem; font-weight: bold;">${inboxCount}</div>
+                            </div>
+                            <div style="background: rgba(244, 63, 94, 0.1); padding: 10px; border-radius: 10px; text-align: center;">
+                                <div style="font-size: 0.7rem; color: #f43f5e;">SPAM</div>
+                                <div style="font-size: 1.1rem; font-weight: bold;">${spamCount}</div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 20px;">
+                            <div style="font-size: 0.8rem; color: #a1a1aa; margin-bottom: 10px;">Recent Activity</div>
+                            ${acc.emails.length > 0 ? acc.emails.slice(0, 3).map(e => `
+                                <div style="display: flex; justify-content: space-between; padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.05); font-size: 0.8rem;">
+                                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px;">${e.subject}</span>
+                                    <span style="color: ${e.folder === 'Spam' ? '#f43f5e' : '#10b981'}">${e.folder}</span>
+                                </div>
+                            `).join('') : '<p style="font-size: 0.7rem; color: #71717a;">No recent emails found.</p>'}
+                        </div>
+                    </div>
+                `;
+            });
+            inboxGrid.innerHTML = html;
+
+        } catch (err) {
+            console.error('Update Loop Failed:', err);
+        }
+    }
+
+    // Start polling
     fetchUpdates();
-    setInterval(fetchUpdates, 3000);
-    setInterval(updateTimers, 1000);
+    setInterval(fetchUpdates, 5000);
 });

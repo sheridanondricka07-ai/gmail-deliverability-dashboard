@@ -1,6 +1,12 @@
 import os
 import json
-import time
+import traceback
+import redis as pyredis
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
 
 # Load .env file if python-dotenv is available
 try:
@@ -9,39 +15,72 @@ try:
 except ImportError:
     pass
 
-# Allow OAuth over HTTP for local development
+# Allow OAuth over HTTP for local development (only if on localhost)
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from google.auth.transport.requests import Request
-
 app = Flask(__name__)
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'super-secret-key-change-this')
+# Secure secret key
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'v7-ultimate-secure-key-999')
 
-# Fixed Admin Credentials
+# --- Persistence Logic (Support both Upstash REST and Standard Redis) ---
+redis_client = None
+
+# 1. Try Upstash REST variables (Vercel KV)
+kv_url = os.environ.get('gmail_gss_REST_API_URL') or os.environ.get('KV_REST_API_URL')
+kv_token = os.environ.get('gmail_gss_REST_API_TOKEN') or os.environ.get('KV_REST_API_TOKEN')
+
+# 2. Try Standard Redis URL (Redis Labs, etc.)
+standard_redis_url = os.environ.get('gmail_gss_REDIS_URL') or os.environ.get('REDIS_URL')
+
+if kv_url and kv_token:
+    try:
+        from upstash_redis import Redis
+        redis_client = Redis(url=kv_url, token=kv_token)
+        print("✅ Connected to Upstash Redis (REST)")
+    except Exception as e:
+        print(f"❌ Upstash Connection Error: {e}")
+
+if not redis_client and standard_redis_url:
+    try:
+        # AUTO-FIX: Upgrade redis:// to rediss:// for secure cloud providers
+        if standard_redis_url.startswith('redis://') and 'localhost' not in standard_redis_url:
+            standard_redis_url = standard_redis_url.replace('redis://', 'rediss://', 1)
+            print("💡 Auto-upgraded Redis URL to secure (rediss://)")
+        
+        is_ssl = standard_redis_url.startswith('rediss://')
+        redis_client = pyredis.from_url(
+            standard_redis_url, 
+            decode_responses=True, 
+            socket_timeout=5,
+            ssl_cert_reqs=None if is_ssl else 'required'
+        )
+        redis_client.ping()
+        print("✅ Connected to Standard Redis (Direct)")
+    except Exception as e:
+        print(f"❌ Standard Redis Connection Error: {e}")
+
+# Admin Credentials
 ADMIN_USER = os.environ.get('ADMIN_USER', 'admin')
 ADMIN_PASS = os.environ.get('ADMIN_PASS', 'admin123')
 
-# Google OAuth Configuration (loaded from environment variables)
-CLIENT_CONFIG = {
-    "web": {
-        "client_id": os.environ.get('GOOGLE_CLIENT_ID', ''),
-        "project_id": os.environ.get('GOOGLE_PROJECT_ID', ''),
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-        "client_secret": os.environ.get('GOOGLE_CLIENT_SECRET', ''),
-        "redirect_uris": ["http://localhost:5000/callback"]
+def get_client_config():
+    client_id = os.environ.get('GOOGLE_CLIENT_ID', '').strip()
+    client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '').strip()
+    if not client_id or not client_secret:
+        raise ValueError("CRITICAL: GOOGLE_CLIENT_ID or SECRET is missing. Check Vercel Settings.")
+    
+    return {
+        "web": {
+            "client_id": client_id,
+            "project_id": os.environ.get('GOOGLE_PROJECT_ID', ''),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_secret": client_secret,
+            "redirect_uris": [os.environ.get('GOOGLE_REDIRECT_URI', 'http://localhost:5000/callback')]
+        }
     }
-}
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-
-# Global store for connected accounts' tokens (In-memory for this demo)
-connected_accounts = {} # format: {email: credentials_obj}
 
 @app.route('/')
 def index():
@@ -51,9 +90,7 @@ def index():
 
 @app.route('/login', methods=['POST'])
 def login():
-    username = request.form.get('username')
-    password = request.form.get('password')
-    if username == ADMIN_USER and password == ADMIN_PASS:
+    if request.form.get('username') == ADMIN_USER and request.form.get('password') == ADMIN_PASS:
         session['logged_in'] = True
         return redirect(url_for('dashboard'))
     return render_template('login.html', error='Invalid credentials')
@@ -71,112 +108,99 @@ def dashboard():
 
 @app.route('/authorize')
 def authorize():
-    if 'logged_in' not in session:
-        return redirect(url_for('index'))
-    
+    if 'logged_in' not in session: return redirect(url_for('index'))
     try:
-        flow = Flow.from_client_config(
-            CLIENT_CONFIG,
-            scopes=SCOPES,
-            redirect_uri='http://localhost:5000/callback'
-        )
+        redirect_uri = url_for('callback', _external=True)
+        if 'localhost' not in redirect_uri: redirect_uri = redirect_uri.replace('http://', 'https://')
         
-        auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+        flow = Flow.from_client_config(get_client_config(), scopes=SCOPES, redirect_uri=redirect_uri)
+        auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
+        
+        # PKCE Fix: Store the verifier
+        session['oauth_state'] = state
+        session['code_verifier'] = flow.code_verifier
+        
         return redirect(auth_url)
     except Exception as e:
-        return f"<h1>Authorize Error</h1><p>{str(e)}</p><a href='/dashboard'>Go Back</a>"
+        return f"<h1>Authorize Error</h1><pre>{traceback.format_exc()}</pre>"
 
 @app.route('/callback')
 def callback():
-    # Handle errors sent back by Google (e.g., access_denied)
-    auth_error = request.args.get('error')
-    if auth_error:
-        error_msg = f"Connection failed: {auth_error}"
-        if auth_error == 'access_denied':
-            error_msg = "Connection Refused: You must add your email to the 'Test Users' list in the Google Cloud Console or click 'Advanced > Go to App' if available."
-        return f"<h1>Auth Error</h1><p>{error_msg}</p><a href='/dashboard' class='btn-pro'>Go Back to Dashboard</a>"
-
     try:
-        flow = Flow.from_client_config(
-            CLIENT_CONFIG,
-            scopes=SCOPES,
-            redirect_uri='http://localhost:5000/callback'
-        )
+        redirect_uri = url_for('callback', _external=True)
+        if 'localhost' not in redirect_uri: redirect_uri = redirect_uri.replace('http://', 'https://')
         
-        # Build the full authorization response URL
-        # We must use request.url, but ensure it matches the redirect_uri scheme
+        flow = Flow.from_client_config(get_client_config(), scopes=SCOPES, redirect_uri=redirect_uri)
+        flow.code_verifier = session.get('code_verifier')
+        
         authorization_response = request.url
-        if authorization_response.startswith('http://'):
-            authorization_response = authorization_response.replace('http://', 'https://', 1)
-            
-        flow.fetch_token(authorization_response=authorization_response)
-        creds = flow.credentials
+        if 'localhost' not in authorization_response: authorization_response = authorization_response.replace('http://', 'https://')
         
-        # Get user info to identify the account
-        service = build('gmail', 'v1', credentials=creds)
+        flow.fetch_token(authorization_response=authorization_response)
+        service = build('gmail', 'v1', credentials=flow.credentials)
         profile = service.users().getProfile(userId='me').execute()
         email = profile.get('emailAddress')
         
-        connected_accounts[email] = creds
+        if redis_client:
+            # Handle both Upstash and Redis-py interfaces
+            if hasattr(redis_client, 'hset'):
+                redis_client.hset("connected_accounts", email, flow.credentials.to_json())
+            else:
+                # Upstash REST might have a different method signature or be handled via redis-py wrapper
+                redis_client.hset("connected_accounts", email, flow.credentials.to_json())
+            print(f"✅ Successfully saved account: {email}")
+        
         return redirect(url_for('dashboard'))
     except Exception as e:
-        return f"<h1>System Error</h1><p>{str(e)}</p><a href='/dashboard' class='btn-pro'>Go Back</a>"
+        return f"<h1>Callback Error</h1><pre>{traceback.format_exc()}</pre>"
 
 @app.route('/api/scan')
 def api_scan():
-    if 'logged_in' not in session:
-        return jsonify({"error": "Unauthorized"}), 401
-    
+    if 'logged_in' not in session: return jsonify({"error": "Unauthorized"}), 401
     results = []
-    for email, creds in connected_accounts.items():
-        try:
-            # Refresh token if expired
-            if creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            
-            service = build('gmail', 'v1', credentials=creds)
-            
-            # Fetch last 5 messages
-            msgs_result = service.users().messages().list(userId='me', maxResults=5).execute()
-            messages = msgs_result.get('messages', [])
-            
-            emails_data = []
-            for msg in messages:
-                m_details = service.users().messages().get(userId='me', id=msg['id']).execute()
-                headers = m_details.get('payload', {}).get('headers', [])
+    
+    try:
+        accounts = {}
+        if redis_client:
+            raw_accounts = redis_client.hgetall("connected_accounts")
+            # Normalize accounts (redis-py returns dict, upstash might return different)
+            for email, data in raw_accounts.items():
+                # Data might be bytes or string
+                val = data if isinstance(data, str) else data.decode('utf-8')
+                accounts[email] = val
+
+        for email, json_data in accounts.items():
+            try:
+                creds = Credentials.from_json(json_data)
+                if creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
                 
-                subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
-                from_val = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown Sender')
+                service = build('gmail', 'v1', credentials=creds)
+                msgs_result = service.users().messages().list(userId='me', maxResults=5).execute()
+                messages = msgs_result.get('messages', [])
                 
-                # Logic for labels
-                labels = m_details.get('labelIds', [])
-                folder = "Inbox"
-                if "SPAM" in labels: folder = "Spam"
-                elif "CATEGORY_PROMOTIONS" in labels: folder = "Promotions"
-                elif "CATEGORY_FORUMS" in labels: folder = "Forums"
+                emails_data = []
+                for msg in messages:
+                    m = service.users().messages().get(userId='me', id=msg['id']).execute()
+                    headers = m.get('payload', {}).get('headers', [])
+                    emails_data.append({
+                        "id": msg['id'],
+                        "subject": next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject'),
+                        "from": next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown'),
+                        "folder": "Spam" if "SPAM" in m.get('labelIds', []) else "Inbox",
+                        "timestamp": m.get('internalDate')
+                    })
+                results.append({"email": email, "status": "online", "emails": emails_data})
+            except Exception as inner:
+                results.append({"email": email, "status": "error", "error": str(inner)})
                 
-                emails_data.append({
-                    "id": msg['id'],
-                    "subject": subject,
-                    "from": from_val,
-                    "folder": folder,
-                    "timestamp": m_details.get('internalDate')
-                })
-            
-            results.append({
-                "email": email,
-                "status": "online",
-                "emails": emails_data
-            })
-        except Exception as e:
-            results.append({
-                "email": email,
-                "status": "error",
-                "error": str(e),
-                "emails": []
-            })
-            
-    return jsonify(results)
+        return jsonify({
+            "db_status": "connected" if redis_client else "local_memory",
+            "results": results
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)

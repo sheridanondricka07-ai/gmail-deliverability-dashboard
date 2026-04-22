@@ -1,39 +1,85 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const inboxGrid = document.getElementById('inbox-grid');
-    const lastSyncTimeEl = document.getElementById('last-sync-time');
-    
-    async function fetchUpdates() {
+    const feedContainer = document.getElementById('feed-container');
+    const manageBtn = document.getElementById('manage-btn');
+    const modal = document.getElementById('manage-modal');
+    const closeModal = document.querySelector('.close-modal');
+    const accountList = document.getElementById('account-list');
+
+    async function fetchFeed() {
         try {
-            const response = await fetch('/api/scan');
-            if (!response.ok) return;
-            
-            const data = await response.json();
+            const res = await fetch('/api/scan');
+            const data = await res.json();
             const results = data.results || [];
-            const db_status = data.db_status || 'unknown';
-            const db_error = data.db_error || 'none';
-            
-            if (lastSyncTimeEl) {
-                lastSyncTimeEl.textContent = new Date().toLocaleTimeString();
-            }
 
             if (results.length === 0) {
-                inboxGrid.innerHTML = `
-                    <div style="text-align: center; padding: 40px; color: #a1a1aa; background: rgba(0,0,0,0.2); border-radius: 15px;">
-                        <p style="font-size: 1.2rem; margin-bottom: 10px;">Status: <span style="color: ${db_status === 'connected' ? '#10b981' : '#f43f5e'}">${db_status}</span></p>
-                        <p style="font-size: 0.8rem; color: #71717a;">Error: ${db_error}</p>
-                        <hr style="margin: 20px 0; border: 0; border-top: 1px solid rgba(255,255,255,0.1);">
-                        <a href="/authorize" class="btn-pro" style="padding: 10px 20px; text-decoration: none;">+ Connect Gmail Now</a>
+                feedContainer.innerHTML = `
+                    <div style="text-align: center; padding: 100px; color: #888;">
+                        <p style="font-size: 1.2rem;">No accounts connected.</p>
+                        <p style="font-size: 0.8rem;">Database Status: ${data.db_status} | Error: ${data.db_error || 'None'}</p>
+                        <a href="/authorize" class="btn-primary" style="display:inline-block; margin-top:20px;">Connect Your First Account</a>
                     </div>
                 `;
                 return;
             }
 
-            // (Rendering logic for results would go here)
-        } catch (err) {
-            console.error('Update Loop Failed:', err);
-        }
+            let html = '';
+            results.forEach(acc => {
+                html += `
+                    <div class="account-row">
+                        <div class="account-info">
+                            <img src="https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico">
+                            <h3>${acc.email}</h3>
+                            <p>Google Workspace</p>
+                        </div>
+                        <div class="email-feed">
+                            ${(acc.emails || []).map(e => `
+                                <div class="email-box ${e.folder === 'Spam' ? 'is-spam' : 'is-inbox'}">
+                                    <div class="sender">${e.from}</div>
+                                    <div class="subject">${e.subject}</div>
+                                    <div class="status-row">
+                                        <span class="label-pill ${e.folder === 'Spam' ? 'pill-spam' : 'pill-inbox'}">
+                                            ${e.folder === 'Spam' ? 'Spam' : 'Primary Inbox'}
+                                        </span>
+                                        <span class="time">${formatDate(e.timestamp)}</span>
+                                    </div>
+                                </div>
+                            `).join('') || '<div class="email-box" style="justify-content:center; color:#999; font-size:0.7rem;">No recent activity</div>'}
+                        </div>
+                    </div>
+                `;
+            });
+            feedContainer.innerHTML = html;
+            renderManageList(results);
+        } catch (e) { console.error("Feed Error:", e); }
     }
 
-    fetchUpdates();
-    setInterval(fetchUpdates, 5000);
+    function formatDate(timestamp) {
+        if (!timestamp) return '';
+        const date = new Date(parseInt(timestamp));
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function renderManageList(accounts) {
+        accountList.innerHTML = accounts.map(acc => `
+            <div class="account-list-item">
+                <span>${acc.email}</span>
+                <button class="btn-delete" onclick="deleteAccount('${acc.email}')">Remove</button>
+            </div>
+        `).join('') || '<p style="text-align:center; color:#999; padding:20px;">No accounts to manage</p>';
+    }
+
+    window.deleteAccount = async (email) => {
+        if (!confirm(`Are you sure you want to remove ${email}?`)) return;
+        try {
+            await fetch(`/api/delete?email=${email}`, { method: 'DELETE' });
+            fetchFeed();
+        } catch (e) { alert("Delete failed"); }
+    };
+
+    manageBtn.onclick = () => modal.style.display = "block";
+    closeModal.onclick = () => modal.style.display = "none";
+    window.onclick = (e) => { if (e.target == modal) modal.style.display = "none"; };
+
+    fetchFeed();
+    setInterval(fetchFeed, 8000); // Refresh every 8s
 });

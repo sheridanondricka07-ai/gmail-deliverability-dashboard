@@ -16,42 +16,47 @@ except ImportError:
 
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 app = Flask(__name__)
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'v10-mega-final')
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'v11-auto-detect-fix')
 
-# --- DIAGNOSTIC REDIS CONNECTION ---
+# --- ROBUST AUTO-DETECT PERSISTENCE ---
 redis_client = None
 last_error = "None"
+detected_var = "None"
 
-prefixes = ['', 'gmail_gss_', 'gmail_gsss_']
-url_vars = ['REDIS_URL', 'KV_REST_API_URL']
+# Priority list of possible Redis environment variables
+search_vars = [
+    'gmail_gss_REDIS_URL', 
+    'gmail_gsss_REDIS_URL', 
+    'REDIS_URL', 
+    'KV_URL', 
+    'KV_REST_API_URL'
+]
 
 found_url = None
-for p in prefixes:
-    for v in url_vars:
-        if os.environ.get(p + v):
-            found_url = os.environ.get(p + v)
-            break
-    if found_url: break
+for v in search_vars:
+    if os.environ.get(v):
+        found_url = os.environ.get(v)
+        detected_var = v
+        break
 
 if found_url:
     try:
-        # Try SSL first
-        ssl_url = found_url.replace('redis://', 'rediss://', 1) if found_url.startswith('redis://') else found_url
-        redis_client = pyredis.from_url(ssl_url, decode_responses=True, socket_timeout=3, ssl_cert_reqs=None)
+        # 1. Try Secure SSL
+        target_url = found_url.replace('redis://', 'rediss://', 1) if 'localhost' not in found_url and found_url.startswith('redis://') else found_url
+        redis_client = pyredis.from_url(target_url, decode_responses=True, socket_timeout=3, ssl_cert_reqs=None)
         redis_client.ping()
-        last_error = "CONNECTED_VIA_SSL"
+        last_error = f"CONNECTED_VIA_{detected_var}"
     except Exception as e1:
         try:
-            # Fallback to non-SSL
-            standard_url = found_url.replace('rediss://', 'redis://', 1) if found_url.startswith('rediss://') else found_url
-            redis_client = pyredis.from_url(standard_url, decode_responses=True, socket_timeout=3)
+            # 2. Try Standard
+            redis_client = pyredis.from_url(found_url, decode_responses=True, socket_timeout=3)
             redis_client.ping()
-            last_error = "CONNECTED_VIA_STANDARD"
+            last_error = f"CONNECTED_VIA_{detected_var}_STD"
         except Exception as e2:
-            last_error = f"SSL_ERR: {str(e1)[:50]} | STD_ERR: {str(e2)[:50]}"
+            last_error = f"FAIL({detected_var}): {str(e2)[:100]}"
             redis_client = None
 else:
-    last_error = "NO_URL_FOUND"
+    last_error = f"NO_URL_FOUND (Checked: {', '.join(search_vars)})"
 
 @app.route('/')
 def index():
